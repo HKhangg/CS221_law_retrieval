@@ -14,6 +14,8 @@ from src.utils.rrf_fusion import fuse
 from src.utils.convert_collection_name import convert_collection_name
 from src.utils.preprocess_func_for_bm25 import preprocess_func_for_bm25, tokenize_text
 from tqdm import tqdm
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from src.utils.chunking import DocumentChunker
 
 logger = get_logger("alqac25")
 
@@ -42,6 +44,10 @@ class LocalRetrieverConfig(BaseModel):
         default=True, description="Enable/disable lexical search (BM25)")
     enable_semantic_search: bool = Field(
         default=True, description="Enable/disable semantic search")
+    
+    enable_chunking: bool = Field(default=False, description="Enable/disable document chunking for semantic search")
+    chunk_size: int = Field(default=512, description="Size of each chunk in characters")
+    chunk_overlap: int = Field(default=100, description="Overlap between chunks")
 
 
 def build_local_indexes(
@@ -51,6 +57,12 @@ def build_local_indexes(
     config.indexes.index_dir.mkdir(parents=True, exist_ok=True)
     print(
         f"Building local indexes with semantic={config.enable_semantic_search}, lexical={config.enable_lexical_search}")
+
+    # ← THÊM CHUNKING
+    if config.enable_semantic_search and config.enable_chunking:
+        print(f"Chunking documents (chunk_size={config.chunk_size}, overlap={config.chunk_overlap})...")
+        chunker = DocumentChunker(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
+        document_store = chunker.chunk_document_dict(document_store)
 
     # Initialize components based on what's enabled
     if config.enable_semantic_search:
@@ -66,7 +78,7 @@ def build_local_indexes(
 
     # Build semantic indexes with progress bar
     if config.enable_semantic_search:
-        for category, docs in tqdm(document_store.items(), desc="Semantic Indexing"):
+        for category, docs in tqdm(document_store.items(), desc="Semantic Indexing"):  # ← DÙNG CHUNKED DOCS
             if not docs:
                 continue
             collection_name = convert_collection_name(category)

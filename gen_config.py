@@ -7,6 +7,7 @@ This script generates various configuration files for testing different combinat
 - Lexical/Semantic search enable/disable (with constraints)
 - Reranker enable/disable
 - Lexical ensemble configurations (BM25 only vs BM25 + others)
+- Chunking enable/disable with configurable chunk_size and overlap
 """
 
 import yaml
@@ -43,11 +44,14 @@ def get_base_config() -> Dict[str, Any]:
                     "model_name_or_path": "hiuminee/alqac25-classifier-phobert-base",
                     "top_k": 1
                 },
-                "embedding_model_name_or_path": "GreenNode/GreenNode-Embedding-Large-VN-Mixed-V1",
+                "embedding_model_name_or_path": "AITeamVN/Vietnamese_Embedding",
                 "top_k_lexical": 15,
                 "top_k_semantic": 15,
                 "enable_lexical_search": True,
                 "enable_semantic_search": True,
+                "enable_chunking": False,          # ← THÊM
+                "chunk_size": 512,                  # ← THÊM
+                "chunk_overlap": 100,               # ← THÊM
                 "indexes": {
                     "index_dir": "data/local_indexes",
                     "chroma_db_path": "data/local_indexes/chroma_db",
@@ -55,14 +59,17 @@ def get_base_config() -> Dict[str, Any]:
                 }
             },
             "global_retriever": {
-                "embedding_model_name": "GreenNode/GreenNode-Embedding-Large-VN-Mixed-V1",
+                "embedding_model_name": "AITeamVN/Vietnamese_Embedding",
                 "top_k_semantic": 20,
                 "enable_lexical_search": True,
                 "enable_semantic_search": True,
+                "enable_chunking": False,          # ← THÊM
+                "chunk_size": 512,                  # ← THÊM
+                "chunk_overlap": 100,               # ← THÊM
                 "indexes": {
                     "index_dir": "data/global_indexes",
                     "chroma_db_path": "data/global_indexes/chroma_db",
-                    "lexical_path": "data/global_indexes/bm25_global.pkl"
+                    "lexical_path": "data/global_indexes/lexical_global.pkl"
                 },
                 "chroma_collection_name": "global_documents",
                 "lexical_ensemble_config": {
@@ -117,10 +124,22 @@ def get_global_search_combinations() -> List[Tuple[bool, bool, Dict[str, bool]]]
     return combinations
 
 
+def get_chunking_combinations() -> List[Tuple[bool, int, int]]:  # ← THÊM
+    """Get valid combinations for chunking (enable_chunking, chunk_size, chunk_overlap)."""
+    # (enable_chunking, chunk_size, chunk_overlap)
+    return [
+        (False, 512, 100),    # No chunking
+        (True, 256, 50),      # Small chunks
+        (True, 512, 100),     # Medium chunks (default)
+        (True, 1024, 200),    # Large chunks
+    ]
+
+
 def generate_config_name(enable_local: bool, enable_global: bool, enable_reranker: bool,
                          local_lexical: bool, local_semantic: bool,
                          global_lexical: bool, global_semantic: bool,
-                         lexical_config: Dict[str, bool]) -> str:
+                         lexical_config: Dict[str, bool],
+                         chunking_enabled: bool) -> str:  # ← THÊM PARAM
     """Generate a descriptive configuration name."""
     parts = []
 
@@ -131,6 +150,10 @@ def generate_config_name(enable_local: bool, enable_global: bool, enable_reranke
         parts.append("global")
     if enable_reranker:
         parts.append("rerank")
+    
+    # ← THÊM CHUNKING INFO
+    if chunking_enabled:
+        parts.append("chunk")
 
     # Local retriever details
     if enable_local:
@@ -161,7 +184,8 @@ def generate_config_name(enable_local: bool, enable_global: bool, enable_reranke
 def create_config(enable_local: bool, enable_global: bool, enable_reranker: bool,
                   local_lexical: bool, local_semantic: bool,
                   global_lexical: bool, global_semantic: bool,
-                  lexical_config: Dict[str, bool]) -> Dict[str, Any]:
+                  lexical_config: Dict[str, bool],
+                  chunking_enabled: bool, chunk_size: int, chunk_overlap: int) -> Dict[str, Any]:  # ← THÊM PARAMS
     """Create a configuration with the specified parameters."""
     config = get_base_config()
 
@@ -174,11 +198,17 @@ def create_config(enable_local: bool, enable_global: bool, enable_reranker: bool
     if enable_local:
         config["pipeline"]["local_retriever"]["enable_lexical_search"] = local_lexical
         config["pipeline"]["local_retriever"]["enable_semantic_search"] = local_semantic
+        config["pipeline"]["local_retriever"]["enable_chunking"] = chunking_enabled  # ← THÊM
+        config["pipeline"]["local_retriever"]["chunk_size"] = chunk_size              # ← THÊM
+        config["pipeline"]["local_retriever"]["chunk_overlap"] = chunk_overlap        # ← THÊM
 
     # Configure global retriever
     if enable_global:
         config["pipeline"]["global_retriever"]["enable_lexical_search"] = global_lexical
         config["pipeline"]["global_retriever"]["enable_semantic_search"] = global_semantic
+        config["pipeline"]["global_retriever"]["enable_chunking"] = chunking_enabled  # ← THÊM
+        config["pipeline"]["global_retriever"]["chunk_size"] = chunk_size              # ← THÊM
+        config["pipeline"]["global_retriever"]["chunk_overlap"] = chunk_overlap        # ← THÊM
         config["pipeline"]["global_retriever"]["lexical_ensemble_config"].update(
             lexical_config)
 
@@ -198,6 +228,9 @@ def generate_all_configs(output_dir: str = "src/config/generated_configs") -> No
         for local, global_, reranker in main_combinations
         if local or global_
     ]
+    
+    chunking_combinations = get_chunking_combinations()  # ← THÊM
+    
     id = 1
     for enable_local, enable_global, enable_reranker in valid_main_combinations:
         local_combinations = get_local_search_combinations() if enable_local else [
@@ -211,49 +244,56 @@ def generate_all_configs(output_dir: str = "src/config/generated_configs") -> No
         if not enable_global:
             global_combinations = [(False, False, {})]
 
-        for local_lexical, local_semantic in local_combinations:
-            for global_lexical, global_semantic, lexical_config in global_combinations:
+        # ← THÊM LOOP CHUNKING
+        for chunking_enabled, chunk_size, chunk_overlap in chunking_combinations:
+            for local_lexical, local_semantic in local_combinations:
+                for global_lexical, global_semantic, lexical_config in global_combinations:
 
-                if enable_local and not local_lexical and not local_semantic:
-                    continue
+                    if enable_local and not local_lexical and not local_semantic:
+                        continue
 
-                if enable_global and not global_lexical and not global_semantic:
-                    continue
+                    if enable_global and not global_lexical and not global_semantic:
+                        continue
 
-                config = create_config(
-                    enable_local, enable_global, enable_reranker,
-                    local_lexical, local_semantic,
-                    global_lexical, global_semantic,
-                    lexical_config
-                )
+                    config = create_config(
+                        enable_local, enable_global, enable_reranker,
+                        local_lexical, local_semantic,
+                        global_lexical, global_semantic,
+                        lexical_config,
+                        chunking_enabled, chunk_size, chunk_overlap  # ← THÊM
+                    )
 
-                config_name = generate_config_name(
-                    enable_local, enable_global, enable_reranker,
-                    local_lexical, local_semantic,
-                    global_lexical, global_semantic,
-                    lexical_config
-                )
+                    config_name = generate_config_name(
+                        enable_local, enable_global, enable_reranker,
+                        local_lexical, local_semantic,
+                        global_lexical, global_semantic,
+                        lexical_config,
+                        chunking_enabled  # ← THÊM
+                    )
 
-                filename = f"{id}_{config_name}.yaml"
-                filepath = os.path.join(output_dir, filename)
+                    filename = f"{id}_{config_name}.yaml"
+                    filepath = os.path.join(output_dir, filename)
 
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    yaml.dump(config, f, default_flow_style=False,
-                              sort_keys=False, indent=2)
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        yaml.dump(config, f, default_flow_style=False,
+                                  sort_keys=False, indent=2)
 
-                configs_generated.append({
-                    'id': id,
-                    'filename': filename,
-                    'enable_local': enable_local,
-                    'enable_global': enable_global,
-                    'enable_reranker': enable_reranker,
-                    'local_lexical': local_lexical,
-                    'local_semantic': local_semantic,
-                    'global_lexical': global_lexical,
-                    'global_semantic': global_semantic,
-                    'lexical_config': lexical_config
-                })
-                id += 1
+                    configs_generated.append({
+                        'id': id,
+                        'filename': filename,
+                        'enable_local': enable_local,
+                        'enable_global': enable_global,
+                        'enable_reranker': enable_reranker,
+                        'local_lexical': local_lexical,
+                        'local_semantic': local_semantic,
+                        'global_lexical': global_lexical,
+                        'global_semantic': global_semantic,
+                        'lexical_config': lexical_config,
+                        'chunking_enabled': chunking_enabled,  # ← THÊM
+                        'chunk_size': chunk_size,              # ← THÊM
+                        'chunk_overlap': chunk_overlap         # ← THÊM
+                    })
+                    id += 1
 
     summary_file = os.path.join(output_dir, "config_summary.yaml")
     with open(summary_file, 'w', encoding='utf-8') as f:
@@ -275,6 +315,8 @@ def generate_all_configs(output_dir: str = "src/config/generated_configs") -> No
         f"- Configs with reranker: {sum(1 for c in configs_generated if c['enable_reranker'])}")
     print(
         f"- Configs with both retrievers: {sum(1 for c in configs_generated if c['enable_local'] and c['enable_global'])}")
+    print(  # ← THÊM
+        f"- Configs with chunking: {sum(1 for c in configs_generated if c['chunking_enabled'])}")
 
 
 def list_configs(config_dir: str = "src/config/generated_configs") -> None:
@@ -299,6 +341,8 @@ def list_configs(config_dir: str = "src/config/generated_configs") -> None:
         print(
             f"    Global: {config['enable_global']} (lex: {config['global_lexical']}, sem: {config['global_semantic']})")
         print(f"    Reranker: {config['enable_reranker']}")
+        # ← THÊM CHUNKING INFO
+        print(f"    Chunking: {config.get('chunking_enabled', False)} (size: {config.get('chunk_size', 512)}, overlap: {config.get('chunk_overlap', 100)})")
         if config['global_lexical'] and config['lexical_config']:
             ensemble = config['lexical_config']
             active_methods = [k.replace('enable_', '')
