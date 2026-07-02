@@ -5,10 +5,9 @@ system:
 
 data:
   law_path: "dataset/alqac25_law.json"
-  all_doc_path: "data/mock_all_doc_2.json"
-  local_doc_path: "data/mock_local_doc_2.json"
   queries_path: "dataset/alqac25_train.json"
-  output_path: "data/output.json"
+  wseg_law_path: "dataset/wseg_alqac25_law.json"
+  wseg_queries_path: "dataset/wseg_alqac25_train.json"
 
 pipeline:
   enable_local_retriever: false
@@ -47,10 +46,10 @@ pipeline:
     chroma_collection_name: "global_documents"
     lexical_ensemble_config:
       k: 50
-      weights: [1.0, 0.0, 0.0]     # Only use TF-IDF (BM25 and QLD weights set to 0)
-      enable_bm25: true           # Disable BM25 in lexical ensemble
-      enable_tfidf: false           # Enable TF-IDF in lexical ensemble
-      enable_qld: false            # Disable QLD in lexical ensemble
+      weights: [1.0, 0.0, 0.0] # Only use TF-IDF (BM25 and QLD weights set to 0)
+      enable_bm25: true # Disable BM25 in lexical ensemble
+      enable_tfidf: false # Enable TF-IDF in lexical ensemble
+      enable_qld: false # Disable QLD in lexical ensemble
 
   rank_fusion:
     method: "rrf"
