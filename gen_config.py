@@ -43,7 +43,7 @@ def get_base_config() -> Dict[str, Any]:
                     "model_name_or_path": "hiuminee/alqac25-classifier-phobert-base",
                     "top_k": 1
                 },
-                "embedding_model_name_or_path": "codefuse-ai/F2LLM-v2-0.6B",
+                "embedding_model_name_or_path": "GreenNode/GreenNode-Embedding-Large-VN-Mixed-V1",
                 "top_k_lexical": 15,
                 "top_k_semantic": 15,
                 "enable_lexical_search": True,
@@ -55,7 +55,7 @@ def get_base_config() -> Dict[str, Any]:
                 }
             },
             "global_retriever": {
-                "embedding_model_name": "codefuse-ai/F2LLM-v2-0.6B",
+                "embedding_model_name": "GreenNode/GreenNode-Embedding-Large-VN-Mixed-V1",
                 "top_k_semantic": 20,
                 "enable_lexical_search": True,
                 "enable_semantic_search": True,
