@@ -13,8 +13,7 @@ from src.utils.preprocess_func_for_bm25 import preprocess_func_for_bm25, tokeniz
 from src.retrievers.lexical import LexicalEnsembleRetriever, LexicalEnsembleConfig
 from src.utils.rrf_fusion import fuse
 from src.models.schemas import Document
-from src.utils.chunking import DocumentChunker
-from src.utils.chunking import extract_original_article_id
+
 
 logger = get_logger("alqac25")
 
@@ -38,10 +37,6 @@ class GlobalRetrieverConfig(BaseModel):
         default=True, description="Enable/disable lexical search (BM25, TF-IDF, QLD)")
     enable_semantic_search: bool = Field(
         default=True, description="Enable/disable semantic search")
-    
-    enable_chunking: bool = Field(default=False, description="Enable/disable document chunking for semantic search")
-    chunk_size: int = Field(default=512, description="Size of each chunk in characters")
-    chunk_overlap: int = Field(default=100, description="Overlap between chunks")
 
 
 def build_global_indexes(
@@ -51,12 +46,6 @@ def build_global_indexes(
     config.indexes.index_dir.mkdir(parents=True, exist_ok=True)
     print(
         f"Building global indexes with semantic={config.enable_semantic_search}, lexical={config.enable_lexical_search}")
-
-    # ← THÊM CHUNKING
-    if config.enable_semantic_search and config.enable_chunking:
-        print(f"Chunking documents (chunk_size={config.chunk_size}, overlap={config.chunk_overlap})...")
-        chunker = DocumentChunker(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
-        all_documents = chunker.chunk_documents(all_documents)
 
     # Build semantic index if enabled
     if config.enable_semantic_search:
@@ -69,8 +58,8 @@ def build_global_indexes(
         client = chromadb.PersistentClient(
             path=str(config.indexes.chroma_db_path))
 
-        doc_texts = [doc.text for doc in all_documents]  # ← DÙNG CHUNKED DOCS
-        doc_ids = [doc.id for doc in all_documents]      # ← DÙNG CHUNKED DOCS
+        doc_texts = [doc.text for doc in all_documents]
+        doc_ids = [doc.id for doc in all_documents]
 
         collection = client.get_or_create_collection(
             name=config.chroma_collection_name)
@@ -172,19 +161,9 @@ class GlobalRetriever:
                 query_embeddings=[query_embedding.tolist()],
                 n_results=self.config.top_k_semantic,
             )
-            # ✅ FIX: Parse chunk IDs lại thành original article_id
             for i, doc_id in enumerate(results["ids"][0]):
-                # doc_id format: "law_id|article_id@chunk0"
-                # Need to convert back to: "law_id|article_id"
-                if "|" in doc_id:
-                    law_id, article_id = doc_id.split("|")
-                    original_article_id = extract_original_article_id(article_id)
-                    normalized_id = f"{law_id}|{original_article_id}"
-                else:
-                    normalized_id = doc_id
-                
                 semantic_results.append({
-                    "id": normalized_id,  # ← DÙNG NORMALIZED ID
+                    "id": doc_id,
                     "text": results["documents"][0][i],
                 })
 
