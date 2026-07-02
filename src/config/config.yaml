@@ -1,0 +1,61 @@
+system:
+  model_cache_dir: "/path/to/shared/models_cache"
+  output_dir: "output"
+  log_level: "INFO"
+
+data:
+  law_path: "dataset/alqac25_law.json"
+  all_doc_path: "data/mock_all_doc_2.json"
+  local_doc_path: "data/mock_local_doc_2.json"
+  queries_path: "dataset/alqac25_train.json"
+  output_path: "data/output.json"
+
+pipeline:
+  enable_local_retriever: false
+  enable_global_retriever: true
+  enable_reranker: false
+
+  save_local_path: "output/local_retriever_results.json"
+  save_global_path: "output/global_retriever_results.json"
+  save_fused_path: "output/fused_results.json"
+  save_reranked_path: "output/reranked_results.json"
+  save_results_path: "output/final_results.json"
+
+  local_retriever:
+    classifier:
+      model_name_or_path: "model/classifier"
+      top_k: 3
+    embedding_model_name_or_path: "all-MiniLM-L6-v2"
+    top_k_lexical: 15
+    top_k_semantic: 15
+    enable_lexical_search: true
+    enable_semantic_search: false
+    indexes:
+      index_dir: "data/local_indexes"
+      chroma_db_path: "data/local_indexes/chroma_db"
+      bm25_path: "data/local_indexes/bm25_local.pkl"
+
+  global_retriever:
+    embedding_model_name: "all-MiniLM-L6-v2"
+    top_k_semantic: 50
+    enable_lexical_search: true
+    enable_semantic_search: false
+    indexes:
+      index_dir: "data/global_indexes"
+      chroma_db_path: "data/global_indexes/chroma_db"
+      lexical_path: "data/global_indexes/bm25_global.pkl"
+    chroma_collection_name: "global_documents"
+    lexical_ensemble_config:
+      k: 50
+      weights: [1.0, 0.0, 0.0]     # Only use TF-IDF (BM25 and QLD weights set to 0)
+      enable_bm25: true           # Disable BM25 in lexical ensemble
+      enable_tfidf: false           # Enable TF-IDF in lexical ensemble
+      enable_qld: false            # Disable QLD in lexical ensemble
+
+  rank_fusion:
+    method: "rrf"
+    top_n_candidates: 20
+
+  reranker:
+    cross_encoder_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    batch_size: 2
