@@ -14,7 +14,7 @@ from src.retrievers.lexical import LexicalEnsembleRetriever, LexicalEnsembleConf
 from src.utils.rrf_fusion import fuse
 from src.models.schemas import Document
 from src.utils.chunking import DocumentChunker
-
+from src.utils.chunking import extract_original_article_id
 
 logger = get_logger("alqac25")
 
@@ -149,43 +149,54 @@ class GlobalRetriever:
 
         logger.info(">>> GlobalRetriever OK")
 
-    def retrieve(self, query: str, wseg_query: str) -> List[Dict[str, Union[str, float]]]:
-        query_embedding = self.embedding_model.encode(
-            query) if self.config.enable_semantic_search else None
+def retrieve(self, query: str, wseg_query: str) -> List[Dict[str, Union[str, float]]]:
+    query_embedding = self.embedding_model.encode(
+        query) if self.config.enable_semantic_search else None
 
-        lexical_results = []
-        semantic_results = []
+    lexical_results = []
+    semantic_results = []
 
-        # Lexical search
-        if self.config.enable_lexical_search:
-            ensemble_docs = self.lexical_ensemble_data._get_relevant_documents(
-                wseg_query)
-            for doc in ensemble_docs:
-                lexical_results.append({
-                    "id": doc.id,
-                    "text": doc.text.replace('_', ' '),
-                })
+    # Lexical search
+    if self.config.enable_lexical_search:
+        ensemble_docs = self.lexical_ensemble_data._get_relevant_documents(
+            wseg_query)
+        for doc in ensemble_docs:
+            lexical_results.append({
+                "id": doc.id,
+                "text": doc.text.replace('_', ' '),
+            })
 
-        # Semantic search
-        if self.config.enable_semantic_search:
-            results = self.collection.query(
-                query_embeddings=[query_embedding.tolist()],
-                n_results=self.config.top_k_semantic,
-            )
-            for i, doc_id in enumerate(results["ids"][0]):
-                semantic_results.append({
-                    "id": doc_id,
-                    "text": results["documents"][0][i],
-                })
+    # Semantic search
+    if self.config.enable_semantic_search:
+        results = self.collection.query(
+            query_embeddings=[query_embedding.tolist()],
+            n_results=self.config.top_k_semantic,
+        )
+        
+        # ✅ FIX: Parse chunk IDs lại thành original article_id
+        for i, doc_id in enumerate(results["ids"][0]):
+            # doc_id format: "law_id|article_id@chunk0"
+            # Need to convert back to: "law_id|article_id"
+            if "|" in doc_id:
+                law_id, article_id = doc_id.split("|")
+                original_article_id = extract_original_article_id(article_id)
+                normalized_id = f"{law_id}|{original_article_id}"
+            else:
+                normalized_id = doc_id
+            
+            semantic_results.append({
+                "id": normalized_id,  # ← DÙNG NORMALIZED ID
+                "text": results["documents"][0][i],
+            })
 
-        # Combine results based on what's enabled
-        search_results = []
-        if self.config.enable_lexical_search and self.config.enable_semantic_search:
-            fused_results = fuse([lexical_results, semantic_results])
-            search_results = fused_results
-        elif self.config.enable_lexical_search:
-            search_results = lexical_results
-        elif self.config.enable_semantic_search:
-            search_results = semantic_results
+    # Combine results based on what's enabled
+    search_results = []
+    if self.config.enable_lexical_search and self.config.enable_semantic_search:
+        fused_results = fuse([lexical_results, semantic_results])
+        search_results = fused_results
+    elif self.config.enable_lexical_search:
+        search_results = lexical_results
+    elif self.config.enable_semantic_search:
+        search_results = semantic_results
 
-        return search_results
+    return search_results

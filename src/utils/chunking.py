@@ -38,27 +38,41 @@ class DocumentChunker:
     
     def chunk_documents(self, documents: List[Document]) -> List[Document]:
         """
-        Chunk a list of documents.
+        Chunk a list of documents. Khiếu maintain law_id + article_id relationship.
         
         Args:
             documents: List of original documents
         
         Returns:
-            List of chunked documents with modified IDs
+            List of chunked documents with modified article_id
         """
         chunked_docs = []
         
         for doc in documents:
             text = doc.text
+            
+            # Skip very short documents
+            if len(text) < 100:
+                chunked_docs.append(doc)
+                continue
+            
             # Split text into chunks
             chunks = self.splitter.split_text(text)
+            
+            # If only one chunk, return original document
+            if len(chunks) == 1:
+                chunked_docs.append(doc)
+                continue
             
             # Create chunked document objects
             for chunk_idx, chunk_text in enumerate(chunks):
                 if len(chunk_text.strip()) > 0:  # Skip empty chunks
+                    # ✅ QUAN TRỌNG: Dùng dấu '@' thay vì '_' để tránh conflict
+                    chunked_article_id = f"{doc.article_id}@chunk{chunk_idx}"
+                    
                     chunked_doc = Document(
                         law_id=doc.law_id,
-                        article_id=f"{doc.article_id}_chunk{chunk_idx}",
+                        article_id=chunked_article_id,
                         text=chunk_text
                     )
                     chunked_docs.append(chunked_doc)
@@ -74,7 +88,7 @@ class DocumentChunker:
             document_store: Dictionary of documents keyed by category
         
         Returns:
-            Dictionary with chunked documents
+            Dictionary with chunked documents (preserving category structure)
         """
         chunked_store = {}
         
@@ -82,3 +96,18 @@ class DocumentChunker:
             chunked_store[category] = self.chunk_documents(docs)
         
         return chunked_store
+
+
+def extract_original_article_id(chunked_article_id: str) -> str:
+    """
+    Extract original article ID from chunked ID.
+    
+    Args:
+        chunked_article_id: Article ID format "15@chunk0" or just "15"
+    
+    Returns:
+        Original article ID
+    """
+    if "@chunk" in chunked_article_id:
+        return chunked_article_id.split("@chunk")[0]
+    return chunked_article_id
