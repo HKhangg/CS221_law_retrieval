@@ -183,87 +183,88 @@ class LocalRetriever:
         self.classifier = CategoryClassifier(config.classifier)
         logger.info("LocalRetriever OK")
 
-def retrieve(self, query: str, wseg_query: str) -> List[Dict[str, Union[str, int, float]]]:
-    selected_categories = self.classifier.classify(query)
-    if not selected_categories:
-        return []
+    def retrieve(self, query: str, wseg_query: str) -> List[Dict[str, Union[str, int, float]]]:
+        selected_categories = self.classifier.classify(query)
+        if not selected_categories:
+            return []
 
-    query_embedding = self.embedding_model.encode(
-        query) if self.config.enable_semantic_search else None
-    bm25_results = []
-    semantic_results = []
+        final_docs_by_id = {}
+        query_embedding = self.embedding_model.encode(
+            query) if self.config.enable_semantic_search else None
+        bm25_results = []
+        semantic_results = []
 
-    for category in selected_categories:
+        for category in selected_categories:
+            if self.config.enable_lexical_search:
+                if category not in self.bm25_indexes:
+                    logger.debug(
+                        f"Category '{category}' not found in BM25 indexes. Skipping."
+                    )
+                    continue
+                bm25_data = self.bm25_indexes[category]
+                tokenized_query = preprocess_func_for_bm25(wseg_query)
+                bm25_scores = bm25_data["index"].get_scores(tokenized_query)
+                top_bm25_indices = sorted(
+                    range(len(bm25_scores)), key=lambda x: bm25_scores[x], reverse=True
+                )[:4 * self.config.top_k_lexical]
+                for i in top_bm25_indices:
+                    doc_id = bm25_data["doc_ids"][i]
+                    doc_text = bm25_data["texts"][i].replace('_', ' ')
+                    bm25_results.append(
+                        {"id": doc_id, "text": doc_text,
+                            "bm25_score": bm25_scores[i]}
+                    )
+
+            if self.config.enable_semantic_search:
+                try:
+                    collection = self.chroma_client.get_collection(
+                        name=convert_collection_name(category)
+                    )
+                    results = collection.query(
+                        query_embeddings=[query_embedding.tolist()],
+                        n_results=4 * self.config.top_k_semantic,
+                    )
+
+                    # ✅ FIX: Parse chunk IDs lại thành original article_id
+                    for i, doc_id in enumerate(results["ids"][0]):
+                        # doc_id format: "law_id|article_id@chunk0"
+                        # Need to convert back to: "law_id|article_id"
+                        if "|" in doc_id:
+                            law_id, article_id = doc_id.split("|")
+                            original_article_id = extract_original_article_id(article_id)
+                            normalized_id = f"{law_id}|{original_article_id}"
+                        else:
+                            normalized_id = doc_id
+                        
+                        semantic_results.append(
+                            {
+                                "id": normalized_id,  # ← DÙNG NORMALIZED ID
+                                "text": results["documents"][0][i],
+                                "distance": results["distances"][0][i],
+                            }
+                        )
+                except ValueError:
+                    logger.error(
+                        f"Warning: ChromaDB collection '{category}' not found. Skipping."
+                    )
+
+        # Process results based on what's enabled
         if self.config.enable_lexical_search:
-            if category not in self.bm25_indexes:
-                logger.debug(
-                    f"Category '{category}' not found in BM25 indexes. Skipping."
-                )
-                continue
-            bm25_data = self.bm25_indexes[category]
-            tokenized_query = preprocess_func_for_bm25(wseg_query)
-            bm25_scores = bm25_data["index"].get_scores(tokenized_query)
-            top_bm25_indices = sorted(
-                range(len(bm25_scores)), key=lambda x: bm25_scores[x], reverse=True
-            )[:4 * self.config.top_k_lexical]
-            for i in top_bm25_indices:
-                doc_id = bm25_data["doc_ids"][i]
-                doc_text = bm25_data["texts"][i].replace('_', ' ')
-                bm25_results.append(
-                    {"id": doc_id, "text": doc_text,
-                        "bm25_score": bm25_scores[i]}
-                )
+            bm25_results.sort(key=lambda x: x["bm25_score"], reverse=True)
+            bm25_results = bm25_results[:self.config.top_k_lexical]
 
         if self.config.enable_semantic_search:
-            try:
-                collection = self.chroma_client.get_collection(
-                    name=convert_collection_name(category)
-                )
-                results = collection.query(
-                    query_embeddings=[query_embedding.tolist()],
-                    n_results=4 * self.config.top_k_semantic,
-                )
+            semantic_results.sort(key=lambda x: x["distance"])
+            semantic_results = semantic_results[: self.config.top_k_semantic]
 
-                # ✅ FIX: Parse chunk IDs lại thành original article_id
-                for i, doc_id in enumerate(results["ids"][0]):
-                    # doc_id format: "law_id|article_id@chunk0"
-                    # Need to convert back to: "law_id|article_id"
-                    if "|" in doc_id:
-                        law_id, article_id = doc_id.split("|")
-                        original_article_id = extract_original_article_id(article_id)
-                        normalized_id = f"{law_id}|{original_article_id}"
-                    else:
-                        normalized_id = doc_id
-                    
-                    semantic_results.append(
-                        {
-                            "id": normalized_id,  # ← DÙNG NORMALIZED ID
-                            "text": results["documents"][0][i],
-                            "distance": results["distances"][0][i],
-                        }
-                    )
-            except ValueError:
-                logger.error(
-                    f"Warning: ChromaDB collection '{category}' not found. Skipping."
-                )
+        # Combine results based on what's enabled
+        if self.config.enable_lexical_search and self.config.enable_semantic_search:
+            results = fuse([bm25_results, semantic_results])
+        elif self.config.enable_lexical_search:
+            results = bm25_results
+        elif self.config.enable_semantic_search:
+            results = semantic_results
+        else:
+            results = []
 
-    # Process results based on what's enabled
-    if self.config.enable_lexical_search:
-        bm25_results.sort(key=lambda x: x["bm25_score"], reverse=True)
-        bm25_results = bm25_results[:self.config.top_k_lexical]
-
-    if self.config.enable_semantic_search:
-        semantic_results.sort(key=lambda x: x["distance"])
-        semantic_results = semantic_results[: self.config.top_k_semantic]
-
-    # Combine results based on what's enabled
-    if self.config.enable_lexical_search and self.config.enable_semantic_search:
-        results = fuse([bm25_results, semantic_results])
-    elif self.config.enable_lexical_search:
-        results = bm25_results
-    elif self.config.enable_semantic_search:
-        results = semantic_results
-    else:
-        results = []
-
-    return results
+        return results
